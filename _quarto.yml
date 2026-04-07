@@ -14,6 +14,7 @@ format:
     css: styles.css
     toc: false
     include-before-body: radar-header.html
-    
+    fig-format: svg
+    fig-dpi: 300
 execute:
   freeze: auto

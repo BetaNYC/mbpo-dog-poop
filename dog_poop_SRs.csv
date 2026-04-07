@@ -1,0 +1,7 @@
+﻿Agency,Complaint Type,Descriptor,Additional_Details,Public View,Location_Type
+Department of Sanitation,Dirty Condition,Dog Waste,Not Cleaned by Property Owner,Yes,Sidewalk
+Department of Sanitation,Dirty Condition,Dog Waste,Not Cleaned by Property Owner,Yes,Street
+Department of Sanitation,Dirty Condition,Dog Waste,Not Picked Up by Dog Owner,Yes,Sidewalk
+Department of Sanitation,Dirty Condition,Dog Waste,Not Picked Up by Dog Owner,Yes,Street
+Department of Parks and Recreation,Animal in a Park,Animal Waste,Dog,Yes,Park
+Department of Parks and Recreation,Animal in a Park,Animal Waste,Dog,Yes,Street/Curbside

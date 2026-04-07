@@ -1,5 +1,5 @@
 ---
-title: "Template Title"
+title: "Analysis: Dog Poop Complaints in Manhattan"
 format: 
   html:
     code-fold: true
@@ -17,10 +17,147 @@ format:
 library(flextable)
 library(sf)
 library(tidyverse)
+library(socratadata)
+library(lubridate)
+library(mapgl)
+library(glue)
 
 # If needed, ensure that the Quarto render and RStudio read the same environment vars
-# readRenviron(".Renviron")
+readRenviron(".Renviron")
+```
+
+New York City's 311 program has six service request categories related to dog poop. They are:
+
+```{r, message=FALSE}
+suppressMessages(dog_poop_sr <- read_csv("dog_poop_SRs.csv"))
+
+dog_poop_sr |> 
+  flextable() |> 
+  set_table_properties(width = 1, layout = "autofit") |> 
+  align(j = 1, align = "left", part = "all")
+```
+
+```{r}
+dog_poop_complaints <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
+  query = soc_query(
+    where = "borough = 'MANHATTAN' AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))"
+  )
+)
+
+min_date <- min(as_date(dog_poop_complaints$created_date))
+max_date <- max(as_date(dog_poop_complaints$created_date))
+n_complaints <- nrow(dog_poop_complaints)
 
 ```
 
+Based on these six service request types, there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed in Manhattan between **`r min_date`** and **`r max_date`**.
+
+A clear annual trend is visible when aggregating these service requests to year and month:
+```{r}
+#| out-width: 100%
+
+
+monthly_dog_poop_complaints <-  dog_poop_complaints |> 
+  st_drop_geometry() |> 
+  group_by(yearMonth = paste0(
+    year(created_date),
+                  "-",
+                  str_split_i(date(created_date),
+                              "-",
+                              2))) |> 
+  summarize(monthly_complaints = n()) |> 
+  ungroup() |> 
+  # Pin to first of month for plotting
+  mutate(date = as.Date(paste0(yearMonth, "-01")))
+
+ggplot(monthly_dog_poop_complaints,
+       aes(x = date,
+           y = monthly_complaints)) +
+  geom_point()+
+  scale_x_date(
+    date_breaks = "1 year",
+    date_minor_breaks = "1 month",
+    date_labels = "%Y"
+  ) +
+  labs(x = "Date (Year, Month)",
+       y = "Dog Poop Service Requests")
+```
+
+Since 2022, dog poop-related 311 service requests have tended to be highest in January, February, and March, with a decreasing trend throughout the calendar year. 2024 is an exception to this trend; the count of service requests increased throughout the calendar year. 
+
+Based on the peak winter months in 2022, 2023, and 2025, the overall volume of dog-poop service requests in Manhattan appears to be increasing.
+
+The back-to-back snowstorms in February of 2026 appear to have led to approximately three times the number of dog poop related service requests than in February of 2025.
+
+```{r}
+dog_poop_complaints_2026 <- dog_poop_complaints |> 
+  filter(year(created_date)>2025)
+
+dog_poop_complaints_2026_by_cb <- dog_poop_complaints |> 
+  st_drop_geometry() |> 
+  filter(year(created_date)>2025) |> 
+  group_by(community_board) |> 
+  summarize(complaints_2026 = n())
+```
+
+In 2026 alone, there have been **`r nrow(dog_poop_complaints_2026)`** dog poop related service requests. The spatial distribution of these complaints is not homogenous:
+
+```{r}
+dog_poop_complaints_2026_by_cb |> 
+  flextable() |> 
+  set_table_properties(width = 1, layout = "autofit") |> 
+  align(j = 1, align = "left", part = "all") |> 
+  set_header_labels(
+    community_board = "Community Board",
+    complaints_2026 = "Dog Poop Service Requests"
+  )
+```
+
+In 2026, the greatest number of dog poop related service requests have come from Manhattan Community Districts 10 and 12. Interestingly, a few Community Districts (1, 2, 5) have had very few in comparison.
+
+Visually:
+```{r}
+suppressMessages(
+comDist <- read_sf("https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/NYC_Community_Districts/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=pgeojson") |> 
+  st_make_valid() |> 
+  filter(BoroCD < 200) |> 
+  mutate(community_board = paste0(
+    str_sub(as.character(BoroCD), -2),
+    " MANHATTAN"
+  )) |> 
+  left_join(dog_poop_complaints_2026_by_cb) |> 
+  mutate(
+    tooltip_html = glue(
+      "<b>Community Board:</b> {community_board}<br>",
+      "<b>Service requests:</b> {complaints_2026}"
+    )
+  )
+)
+
+maplibre(style = carto_style("positron")) |> 
+  fit_bounds(comDist) |> 
+  add_fill_layer(
+    id = "Community Districts",
+    source = comDist,
+    fill_color = interpolate(
+      column = "complaints_2026",
+      values = c(
+        min(comDist$complaints_2026),
+        max(comDist$complaints_2026)
+      ),
+      stops = c("#fff5f0", "#ef3b2c")
+    ),
+    fill_opacity = 0.7,
+    tooltip = "tooltip_html"
+  ) |> 
+  add_circle_layer(
+    id = "Service Requests",
+    source = dog_poop_complaints_2026,
+    circle_color = "#7f7f7f",
+    circle_stroke_color = "#cccccc",
+    circle_radius = 5,
+    circle_stroke_width = 1
+  )
+```
 
