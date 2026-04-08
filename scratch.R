@@ -45,3 +45,13 @@ dog_poop_complaints |>
   filter(year(created_date)>2025) |> 
   group_by(community_board) |> 
   summarize(complaints_2026 = n())
+
+
+# Convert quarter mile to decimal degrees
+library(measurements)
+conv_unit(0.25, "mi", "m")
+
+library(mapview)
+
+mapview(st_buffer(mn_link_withScreens,
+                  dist = 400))

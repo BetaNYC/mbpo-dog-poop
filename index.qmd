@@ -8,8 +8,6 @@ format:
 ```{r}
 #| label: setup
 #| include: true
-#| warning: false
-#| message: false
 
 # Use quarto render to generate a static site in /docs
 # Set github pages to deploy from main branch, /docs
@@ -21,6 +19,7 @@ library(socratadata)
 library(lubridate)
 library(mapgl)
 library(glue)
+library(scales)
 
 # If needed, ensure that the Quarto render and RStudio read the same environment vars
 readRenviron(".Renviron")
@@ -28,8 +27,8 @@ readRenviron(".Renviron")
 
 New York City's 311 program has six service request categories related to dog poop. They are:
 
-```{r, message=FALSE}
-suppressMessages(dog_poop_sr <- read_csv("dog_poop_SRs.csv"))
+```{r}
+dog_poop_sr <- read_csv("dog_poop_SRs.csv")
 
 dog_poop_sr |> 
   flextable() |> 
@@ -118,6 +117,9 @@ In 2026, the greatest number of dog poop related service requests have come from
 
 Visually:
 ```{r}
+#| out-height: 1000px
+
+
 suppressMessages(
 comDist <- read_sf("https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/NYC_Community_Districts/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=pgeojson") |> 
   st_make_valid() |> 
@@ -160,4 +162,135 @@ maplibre(style = carto_style("positron")) |>
     circle_stroke_width = 1
   )
 ```
+    
+Because the service requests are associated with a specific location given by latitude and longitude coordinates, they may be aggregated to different areas. For example, a public awareness campaign may utilize LinkNYC Kiosks with screens. The number of 2026 service requests within a five minute (~ 0.25mi / 400m) walk of these locations may be determined:
+```{r}
+#| out-width: 100%
 
+
+mn_link_withScreens <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/LinkNYC-Kiosk-Locations/s4kf-3yrf/about_data",
+  query = soc_query(
+    where = "planned_kiosk_type != 'LINK5G_NoAd' AND link_installation_status != 'Removed Pending Reinstall' AND boro = 'Manhattan'"
+  )
+) |> 
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = 4326)
+
+mn_link_withScreens$sr_count <- st_intersects(mn_link_withScreens |> 
+                                                st_buffer(dist = 400),
+                                              dog_poop_complaints_2026) |> 
+  lengths()
+
+mn_link_withScreens |> 
+  st_drop_geometry() |> 
+  group_by(sr_count) |> 
+  summarize(n_kiosks = n()) |>
+  ungroup() |> 
+  ggplot(aes(x = sr_count, y = n_kiosks)) +
+  geom_point() + 
+  labs(x = "Number of Dog Poop Service Requests",
+       y = "Number of LinkNYC Kiosks within a Five-Minute Walk") +
+  scale_x_continuous(minor_breaks = seq(0,60,5))
+```
+
+Of the **`r scales::comma(nrow(mn_link_withScreens))`** LinkNYC kiosks in Manhattan with a screen, **`r nrow(mn_link_withScreens |> filter(sr_count == 0))`** do not have a dog poop service request in 2026 within a five minute walk. **`r nrow(mn_link_withScreens |> filter(sr_count >= 5))`** kiosks have five or more service requests within this area. **`r nrow(mn_link_withScreens |> filter(sr_count >= 10))`** kiosks have 10 or more service requests within this area.
+
+Let's take a look at the relationship between dog licenses and dog poop service requests. The dog license dataset is reported at the Zip Code level, so we'll aggregate 2026 service requests to that level:
+```{r}
+#| out-width: 100%
+
+
+manhattan_zcta <- read_sf("https://services2.arcgis.com/FiaPA4ga0iQKduv3/ArcGIS/rest/services/Census_ZIP_Code_Tabulation_Areas_2010_v1/FeatureServer/0/query?where=1%3D1&geometry=-74.0479%2C40.6829%2C-73.9067%2C40.8820&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=geojson")|> 
+          filter(str_starts(ZCTA5, "10") & !str_starts(ZCTA5, "104"))
+
+dog_licenses <- soc_read(
+  "https://data.cityofnewyork.us/Health/NYC-Dog-Licensing-Dataset/nu7n-tubp/about_data",
+  query = soc_query(
+    where = "zipcode < 10400"
+  )
+)
+
+dog_licenses_by_zip <- dog_licenses |> 
+  group_by(zipcode) |> 
+  summarize(n_dog_licenses = n()) |> 
+  mutate(zipcode = as.character(zipcode))
+
+
+manhattan_zcta$dog_poop_SRs_26 <- st_intersects(manhattan_zcta,
+                                                dog_poop_complaints_2026) |> 
+  lengths()
+
+manhattan_zcta <- manhattan_zcta |> 
+  left_join(dog_licenses_by_zip,
+            by = join_by("ZCTA5" == "zipcode"))
+
+ggplot(manhattan_zcta |> 
+         filter(!(dog_poop_SRs_26 == 0 & is.na(n_dog_licenses))),
+       aes(x = n_dog_licenses,
+           y = dog_poop_SRs_26)) +
+  geom_point() +
+  geom_vline(aes(xintercept = median(n_dog_licenses, na.rm = T)),
+             linetype = 2,
+             color = "grey40") +
+  geom_hline(aes(yintercept = median(dog_poop_SRs_26, na.rm = T)),
+             linetype = 2,
+             color = "grey40")+
+  scale_x_continuous(label = comma) +
+  labs(x = "Dog Licenses", y = "2026 YTD Dog Poop Service Requests")
+```
+  
+Above, the dotted lines indicate the median for each axis' variable, separating the zip codes into Low - Low, Low - High, High - Low, and High - High quadrants.
+
+Turning to 311 Service Requests related to rodent activity, the various specific complaint types can be queried using the following five conditions:
+
+- Agency = Department of Education & Descriptor = Rodents/Mice
+- Agency = Department of Health and Mental Hygiene & descriptor = Rodents/Insects/Garbage
+- Agency = Department of Health and Mental Hygiene & Complaint Type = Rodent
+- Agency = Department of Parks and Recreation & Descriptor = Rodent Sighting
+- Agency = Department of Sanitation & Descriptor = Insects or Rodents
+
+```{r}
+rodent_SRs <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
+  query = soc_query(
+    where = "borough = 'MANHATTAN' AND (
+      (agency_name = 'Department of Education' AND descriptor = 'Rodents/Mice') OR
+      (agency_name = 'Department of Health and Mental Hygiene' AND descriptor = 'Rodents/Insects/Garbage') OR
+      (agency_name = 'Department of Health and Mental Hygiene' AND complaint_type = 'Rodent') OR
+      (agency_name = 'Department of Parks and Recreation' AND descriptor = 'Rodent Sighting') OR
+      (agency_name = 'Department of Sanitation' AND descriptor = 'Insects or Rodents'))"
+  )
+)
+
+rodent_SRs_2026 <- rodent_SRs |> 
+  filter(year(created_date)>2025)
+
+manhattan_zcta$rodent_SRs_26 <- st_intersects(manhattan_zcta,
+                                              rodent_SRs_2026) |> 
+  lengths()
+```
+
+There have been **`r scales::comma(nrow(rodent_SRs_2026))`** rodent-related 311 Service Requests in Manhattan in 2026 to date.
+
+Again, aggregating to Zip Code:
+```{r}
+#| out-width: 100%
+
+
+ggplot(manhattan_zcta |>
+         filter(!(dog_poop_SRs_26 == 0 & is.na(n_dog_licenses))),
+       aes(x = dog_poop_SRs_26,
+           y = rodent_SRs_26)) +
+  geom_point() +
+  geom_vline(aes(xintercept = median(dog_poop_SRs_26, na.rm = T)),
+             linetype = 2,
+             color = "grey40") +
+  geom_hline(aes(yintercept = median(rodent_SRs_26, na.rm = T)),
+             linetype = 2,
+             color = "grey40") +
+  labs(x = "2026 YTD Dog Poop Service Requests",
+       y = "2026 YTD Rodent Service Requests")
+```
+
+As above, the variable medians separate Manhattan Zip Codes into quadrants. Within the High - High quadrant, dog poop service requests and rodent-related service requests are positively correlated.

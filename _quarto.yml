@@ -18,3 +18,5 @@ format:
     fig-dpi: 300
 execute:
   freeze: auto
+  message: false
+  warning: false
