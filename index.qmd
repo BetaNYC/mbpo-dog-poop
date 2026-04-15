@@ -20,23 +20,20 @@ library(lubridate)
 library(mapgl)
 library(glue)
 library(scales)
+library(ggrepel)
 
 # If needed, ensure that the Quarto render and RStudio read the same environment vars
 readRenviron(".Renviron")
 ```
 
-New York City's 311 program has six service request categories related to dog poop. They are:
+Per its data dictionary on [NYC Open Data](https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data), New York City's 311 program includes **5,963** specific Service Request (SR) types that can be directed to specific agencies. Of these nearly 6,000 ways to formally complain to the city, exactly six relate to dog poop. They are:
 
 ```{r}
+#| freeze: true
+
+
 dog_poop_sr <- read_csv("dog_poop_SRs.csv")
 
-dog_poop_sr |> 
-  flextable() |> 
-  set_table_properties(width = 1, layout = "autofit") |> 
-  align(j = 1, align = "left", part = "all")
-```
-
-```{r}
 dog_poop_complaints <- soc_read(
   "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
   query = soc_query(
@@ -44,253 +41,198 @@ dog_poop_complaints <- soc_read(
   )
 )
 
+mn_SRs_20_26_countOnly <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    select = "count(*) as count",
+    where = "borough = 'MANHATTAN'"
+  )
+)
+
 min_date <- min(as_date(dog_poop_complaints$created_date))
 max_date <- max(as_date(dog_poop_complaints$created_date))
 n_complaints <- nrow(dog_poop_complaints)
 
+dog_poop_sr |> 
+  flextable() |> 
+  set_table_properties(width = 1, layout = "autofit") |> 
+  align(j = 1, align = "left", part = "all")
 ```
 
-Based on these six service request types, there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed in Manhattan between **`r min_date`** and **`r max_date`**.
+Between **`r min_date`** and **`r max_date`**, there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed in Manhattan. Dog poop-related service requests accounted for **`r round(n_complaints/mn_SRs_20_26_countOnly[[1,1]][1] *100,2)`%** of all service requests filed in Manhattan for the same time period. Despite this, the presence of dog poop on city streets is a top-of-mind quality of life issue for many New Yorkers. 
 
-A clear annual trend is visible when aggregating these service requests to year and month:
+When considering the spatial variation in a particular Service Request type as it relates to quality of life concerns at a given geographic unit (here, Community Districts are used), two factors must be considered: 
+
+- 311 Service Request data are records of citizen interaction with a government system, not direct observation of the associated phenomenon, and
+- There is spatial variation in 311 contacting volume, which is a function of contacting propensity and condition. See Minkoff (2016)[^1] for further discussion.
+
+[^1]: [Minkoff, Scott L. "NYC 311: A tract-level analysis of citizen–government contacting in New York City." Urban Affairs Review 52.2 (2016): 211-246.](https://doi.org/10.1177/1078087415577796)
+
+Therefore, when considering the variation in dog poop-related Service Requests across Manhattan Community Districts, it must be reiterated that this is not an actual measure of dog poop on Manhattan streets. We also expect that Service Request volume will largely account for the variation in dog poop Service Requests -- Where it doesn't warrants further investigation. 
+
+A linear model of dog poop service requests as a function of service request volume at the Community District level allows for an evaluation of the above relationship. Model residuals (i.e. the error, or how different the observed relationship between dog poop service requests and request volume is from the expected relationship) are a useful measure of which Community Districts have greater or fewer dog poop service requests than expected.
+
+```{r}
+#| freeze: true
+
+mn_SRs_20_26 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    select = "community_board, count(*) as count",
+    where = "borough = 'MANHATTAN'",
+    group_by = "community_board"
+  )
+)
+
+mn_dp_SRs_20_26 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    select = "community_board, count(*) as dp_count",
+    where = "borough = 'MANHATTAN' AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))",
+    group_by = "community_board"
+  )
+)
+```
+
 ```{r}
 #| out-width: 100%
 
 
-monthly_dog_poop_complaints <-  dog_poop_complaints |> 
-  st_drop_geometry() |> 
-  group_by(yearMonth = paste0(
-    year(created_date),
-                  "-",
-                  str_split_i(date(created_date),
-                              "-",
-                              2))) |> 
-  summarize(monthly_complaints = n()) |> 
-  ungroup() |> 
-  # Pin to first of month for plotting
-  mutate(date = as.Date(paste0(yearMonth, "-01")))
+mn_comparison_20_26 <- mn_dp_SRs_20_26 |> 
+  left_join(mn_SRs_20_26) |> 
+  filter(community_board != "Unspecified MANHATTAN")
 
-ggplot(monthly_dog_poop_complaints,
-       aes(x = date,
-           y = monthly_complaints)) +
-  geom_point()+
-  scale_x_date(
-    date_breaks = "1 year",
-    date_minor_breaks = "1 month",
-    date_labels = "%Y"
+fit <- lm(dp_count ~ count, data = mn_comparison_20_26)
+
+ci <- predict(fit, interval = "confidence", level = 0.95)
+mn_comparison_20_26$lwr <- ci[, "lwr"]
+mn_comparison_20_26$upr <- ci[, "upr"]
+mn_comparison_20_26$outlier <- with(mn_comparison_20_26,
+                                     dp_count < lwr | dp_count > upr)
+
+ggplot(mn_comparison_20_26,
+       aes(x = count, y = dp_count)) +
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  geom_text_repel(
+    data = subset(mn_comparison_20_26, outlier),
+    aes(label = community_board),   # swap in whatever your CB label column is
+    size = 3,
+    min.segment.length = 0,
+    box.padding = 0.4
   ) +
-  labs(x = "Date (Year, Month)",
-       y = "Dog Poop Service Requests")
+  scale_x_continuous(labels = label_comma()) +
+  labs(x = "Service Requests, All Categories",
+       y = "Dog Poop Service Requests",
+       title = "Manhattan 311 Dog Poop Service Requests as a Function of Request Volume",
+       subtitle = "2020 - 2026 (YTD), by Community District")+
+  scale_y_continuous(minor_breaks = seq(-250,700,50))
 ```
 
-Since 2022, dog poop-related 311 service requests have tended to be highest in January, February, and March, with a decreasing trend throughout the calendar year. 2024 is an exception to this trend; the count of service requests increased throughout the calendar year. 
+The linear regression of dog poop-related service requests as a function of overall request volume in Manhattan Community Boards (2020 - 2026 YTD) is statistically significant with a p-value of less than **0.01.** The adjusted *R^2^* of the regression is **0.6957**, meaning that **69.57%** of the variance in dog poop service requests in Manhattan is accounted for by request volume. Those Community Districts whose observed service request volumes are of interest. Manhattan Community Districts 2, 3, and 5 have lower-than-expected counts of dog poop service requests since January 1, 2020, while only Manhattan Community District 12 has a higher than expected count of dog poop service requests. 
 
-Based on the peak winter months in 2022, 2023, and 2025, the overall volume of dog-poop service requests in Manhattan appears to be increasing.
-
-The back-to-back snowstorms in February of 2026 appear to have led to approximately three times the number of dog poop related service requests than in February of 2025.
+Given the basis for identifying Community District 12 as an area of concern, we can look for those blocks which have the highest number of requests as potential sites for further investigation:
 
 ```{r}
-dog_poop_complaints_2026 <- dog_poop_complaints |> 
-  filter(year(created_date)>2025)
-
-dog_poop_complaints_2026_by_cb <- dog_poop_complaints |> 
-  st_drop_geometry() |> 
-  filter(year(created_date)>2025) |> 
-  group_by(community_board) |> 
-  summarize(complaints_2026 = n())
-```
-
-In 2026 alone, there have been **`r nrow(dog_poop_complaints_2026)`** dog poop related service requests. The spatial distribution of these complaints is not homogenous:
-
-```{r}
-dog_poop_complaints_2026_by_cb |> 
-  flextable() |> 
-  set_table_properties(width = 1, layout = "autofit") |> 
-  align(j = 1, align = "left", part = "all") |> 
-  set_header_labels(
-    community_board = "Community Board",
-    complaints_2026 = "Dog Poop Service Requests"
-  )
-```
-
-In 2026, the greatest number of dog poop related service requests have come from Manhattan Community Districts 10 and 12. Interestingly, a few Community Districts (1, 2, 5) have had very few in comparison.
-
-Visually:
-```{r}
-#| out-height: 1000px
+#| freeze: true
 
 
-suppressMessages(
-comDist <- read_sf("https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/NYC_Community_Districts/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=pgeojson") |> 
+comDist12 <- read_sf("https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/NYC_Community_Districts/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=pgeojson") |> 
   st_make_valid() |> 
-  filter(BoroCD < 200) |> 
+  filter(BoroCD == 112) |> 
   mutate(community_board = paste0(
     str_sub(as.character(BoroCD), -2),
     " MANHATTAN"
-  )) |> 
-  left_join(dog_poop_complaints_2026_by_cb) |> 
-  mutate(
-    tooltip_html = glue(
-      "<b>Community Board:</b> {community_board}<br>",
-      "<b>Service requests:</b> {complaints_2026}"
+  ))
+
+comDist12_wkt <- st_as_text(st_geometry(comDist12)[[1]])
+
+comDist12_dog_poop_SRs <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    where = paste0(
+      "borough = 'MANHATTAN' AND community_board = '12 MANHATTAN' AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))"
+      )
+    )
+  )
+
+comDist12_centerlines <- soc_read(
+  "https://data.cityofnewyork.us/City-Government/Centerline/inkn-q76z.json",
+  query = soc_query(
+    where = paste0(
+      "within_polygon(the_geom, '",
+      comDist12_wkt,
+      "')"
     )
   )
 )
+```
+
+Each of the **`r nrow(comDist12_dog_poop_SRs)`** dog poop-related Service Requests filed in Manhattan Community District 12 between 2020 and 2026 (YTD) can be associated with the nearest block per the Street Centerline dataset. The blocks with the **10** highest counts of nearest Service Requests are shown below. 
+
+```{r}
+#| out-width: 100%
+#| out-height: 1000px
+
+
+comDist12_dog_poop_SRs <- comDist12_dog_poop_SRs |> 
+  st_join(
+    comDist12_centerlines |> select(objectid),
+    join = st_nearest_feature
+    )
+
+top_blocks <- comDist12_dog_poop_SRs |> 
+  group_by(objectid) |> 
+  summarize(n_dog_poop_SRs = n()) |> 
+  arrange(desc(n_dog_poop_SRs)) |> 
+  head(10)
 
 maplibre(style = carto_style("positron")) |> 
-  fit_bounds(comDist) |> 
-  add_fill_layer(
-    id = "Community Districts",
-    source = comDist,
-    fill_color = interpolate(
-      column = "complaints_2026",
-      values = c(
-        min(comDist$complaints_2026),
-        max(comDist$complaints_2026)
-      ),
-      stops = c("#fff5f0", "#ef3b2c")
+  fit_bounds(comDist12) |> 
+  add_line_layer(
+    id = "Community District 12",
+    source = comDist12,
+    line_color = "#888888",
+    line_width = 2
+  ) |>
+   add_line_layer(
+  id = "Top Blocks Hitbox",
+  source = top_blocks |>
+    mutate(
+      tooltip_html = glue(
+        "<b>Block ObjectID:</b> {objectid}<br>",
+        "<b>Dog Poop Service Requests</b> {n_dog_poop_SRs}"
+      )
     ),
-    fill_opacity = 0.7,
-    tooltip = "tooltip_html"
+  tooltip = "tooltip_html",
+  line_color = "#000000",
+  line_width = 24,
+  line_opacity = 0
+  ) |>
+  add_line_layer(
+    id = "Top Blocks",
+    source = top_blocks,
+    line_color = "#b30000",
+    line_width = 8
   ) |> 
   add_circle_layer(
     id = "Service Requests",
-    source = dog_poop_complaints_2026,
-    circle_color = "#7f7f7f",
-    circle_stroke_color = "#cccccc",
-    circle_radius = 5,
-    circle_stroke_width = 1
+    source = comDist12_dog_poop_SRs |> 
+      filter(objectid %in% top_blocks$objectid),
+    circle_color = "#444444",
+    circle_stroke_color = "#666666",
+    circle_radius = 10,
+    circle_stroke_width = 2,
+    cluster_options = cluster_options(
+      max_zoom = 20
+    )
   )
-```
-    
-Because the service requests are associated with a specific location given by latitude and longitude coordinates, they may be aggregated to different areas. For example, a public awareness campaign may utilize LinkNYC Kiosks with screens. The number of 2026 service requests within a five minute (~ 0.25mi / 400m) walk of these locations may be determined:
-```{r}
-#| out-width: 100%
-
-
-mn_link_withScreens <- soc_read(
-  "https://data.cityofnewyork.us/Social-Services/LinkNYC-Kiosk-Locations/s4kf-3yrf/about_data",
-  query = soc_query(
-    where = "planned_kiosk_type != 'LINK5G_NoAd' AND link_installation_status != 'Removed Pending Reinstall' AND boro = 'Manhattan'"
-  )
-) |> 
-  st_as_sf(coords = c("longitude", "latitude"),
-           crs = 4326)
-
-mn_link_withScreens$sr_count <- st_intersects(mn_link_withScreens |> 
-                                                st_buffer(dist = 400),
-                                              dog_poop_complaints_2026) |> 
-  lengths()
-
-mn_link_withScreens |> 
-  st_drop_geometry() |> 
-  group_by(sr_count) |> 
-  summarize(n_kiosks = n()) |>
-  ungroup() |> 
-  ggplot(aes(x = sr_count, y = n_kiosks)) +
-  geom_point() + 
-  labs(x = "Number of Dog Poop Service Requests",
-       y = "Number of LinkNYC Kiosks within a Five-Minute Walk") +
-  scale_x_continuous(minor_breaks = seq(0,60,5))
-```
-
-Of the **`r scales::comma(nrow(mn_link_withScreens))`** LinkNYC kiosks in Manhattan with a screen, **`r nrow(mn_link_withScreens |> filter(sr_count == 0))`** do not have a dog poop service request in 2026 within a five minute walk. **`r nrow(mn_link_withScreens |> filter(sr_count >= 5))`** kiosks have five or more service requests within this area. **`r nrow(mn_link_withScreens |> filter(sr_count >= 10))`** kiosks have 10 or more service requests within this area.
-
-Let's take a look at the relationship between dog licenses and dog poop service requests. The dog license dataset is reported at the Zip Code level, so we'll aggregate 2026 service requests to that level:
-```{r}
-#| out-width: 100%
-
-
-manhattan_zcta <- read_sf("https://services2.arcgis.com/FiaPA4ga0iQKduv3/ArcGIS/rest/services/Census_ZIP_Code_Tabulation_Areas_2010_v1/FeatureServer/0/query?where=1%3D1&geometry=-74.0479%2C40.6829%2C-73.9067%2C40.8820&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=geojson")|> 
-          filter(str_starts(ZCTA5, "10") & !str_starts(ZCTA5, "104"))
-
-dog_licenses <- soc_read(
-  "https://data.cityofnewyork.us/Health/NYC-Dog-Licensing-Dataset/nu7n-tubp/about_data",
-  query = soc_query(
-    where = "zipcode < 10400"
-  )
-)
-
-dog_licenses_by_zip <- dog_licenses |> 
-  group_by(zipcode) |> 
-  summarize(n_dog_licenses = n()) |> 
-  mutate(zipcode = as.character(zipcode))
-
-
-manhattan_zcta$dog_poop_SRs_26 <- st_intersects(manhattan_zcta,
-                                                dog_poop_complaints_2026) |> 
-  lengths()
-
-manhattan_zcta <- manhattan_zcta |> 
-  left_join(dog_licenses_by_zip,
-            by = join_by("ZCTA5" == "zipcode"))
-
-ggplot(manhattan_zcta |> 
-         filter(!(dog_poop_SRs_26 == 0 & is.na(n_dog_licenses))),
-       aes(x = n_dog_licenses,
-           y = dog_poop_SRs_26)) +
-  geom_point() +
-  geom_vline(aes(xintercept = median(n_dog_licenses, na.rm = T)),
-             linetype = 2,
-             color = "grey40") +
-  geom_hline(aes(yintercept = median(dog_poop_SRs_26, na.rm = T)),
-             linetype = 2,
-             color = "grey40")+
-  scale_x_continuous(label = comma) +
-  labs(x = "Dog Licenses", y = "2026 YTD Dog Poop Service Requests")
 ```
   
-Above, the dotted lines indicate the median for each axis' variable, separating the zip codes into Low - Low, Low - High, High - Low, and High - High quadrants.
+The top 10 blocks (street segments, to be specific) represent **`r round(sum(top_blocks$n_dog_poop_SRs)/nrow(comDist12_dog_poop_SRs)*100,2)`%** of the dog poop-related Service Requests. Notably, there is a cluster of **360** Service Requests located on and around Riverside Drive between West 158th and West 160th streets.
 
-Turning to 311 Service Requests related to rodent activity, the various specific complaint types can be queried using the following five conditions:
+Based on the above, accurate, appropriately contextualized, and defensible messaging may be something like:
 
-- Agency = Department of Education & Descriptor = Rodents/Mice
-- Agency = Department of Health and Mental Hygiene & descriptor = Rodents/Insects/Garbage
-- Agency = Department of Health and Mental Hygiene & Complaint Type = Rodent
-- Agency = Department of Parks and Recreation & Descriptor = Rodent Sighting
-- Agency = Department of Sanitation & Descriptor = Insects or Rodents
+> We crunched the numbers -- Since 2020, New Yorkers filed 80 to 360 more dog poop-related Service Requests in Manhattan Community District 12 than expected based on request volume. We decided to take a closer look. Over 60% of the service requests were filed on and around Riverside Drive between West 158th and West 160th streets. Other clusters of requests came from the West side of Hood Wright Park, Fort Washington Ave between West 187th and West 190th streets, near Hillside Ave and Borgardus Place, and on Seaman Ave between Dyckman and and Cumming Streets.
 
-```{r}
-rodent_SRs <- soc_read(
-  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
-  query = soc_query(
-    where = "borough = 'MANHATTAN' AND (
-      (agency_name = 'Department of Education' AND descriptor = 'Rodents/Mice') OR
-      (agency_name = 'Department of Health and Mental Hygiene' AND descriptor = 'Rodents/Insects/Garbage') OR
-      (agency_name = 'Department of Health and Mental Hygiene' AND complaint_type = 'Rodent') OR
-      (agency_name = 'Department of Parks and Recreation' AND descriptor = 'Rodent Sighting') OR
-      (agency_name = 'Department of Sanitation' AND descriptor = 'Insects or Rodents'))"
-  )
-)
-
-rodent_SRs_2026 <- rodent_SRs |> 
-  filter(year(created_date)>2025)
-
-manhattan_zcta$rodent_SRs_26 <- st_intersects(manhattan_zcta,
-                                              rodent_SRs_2026) |> 
-  lengths()
-```
-
-There have been **`r scales::comma(nrow(rodent_SRs_2026))`** rodent-related 311 Service Requests in Manhattan in 2026 to date.
-
-Again, aggregating to Zip Code:
-```{r}
-#| out-width: 100%
-
-
-ggplot(manhattan_zcta |>
-         filter(!(dog_poop_SRs_26 == 0 & is.na(n_dog_licenses))),
-       aes(x = dog_poop_SRs_26,
-           y = rodent_SRs_26)) +
-  geom_point() +
-  geom_vline(aes(xintercept = median(dog_poop_SRs_26, na.rm = T)),
-             linetype = 2,
-             color = "grey40") +
-  geom_hline(aes(yintercept = median(rodent_SRs_26, na.rm = T)),
-             linetype = 2,
-             color = "grey40") +
-  labs(x = "2026 YTD Dog Poop Service Requests",
-       y = "2026 YTD Rodent Service Requests")
-```
-
-As above, the variable medians separate Manhattan Zip Codes into quadrants. Within the High - High quadrant, dog poop service requests and rodent-related service requests are positively correlated.
+Moving to looking at Dog License data, we'd similarly need to normalize the data at the zip code level by population.
