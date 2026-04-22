@@ -29,7 +29,7 @@ readRenviron(".Renviron")
 Per its data dictionary on [NYC Open Data](https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data), New York City's 311 program includes **5,963** specific Service Request (SR) types that can be directed to specific agencies. Of these nearly 6,000 ways to formally complain to the city, exactly six relate to dog poop. They are:
 
 ```{r}
-#| freeze: true
+#| cache: true
 
 
 dog_poop_sr <- read_csv("dog_poop_SRs.csv")
@@ -73,7 +73,7 @@ Therefore, when considering the variation in dog poop-related Service Requests a
 A linear model of dog poop service requests as a function of service request volume at the Community District level allows for an evaluation of the above relationship. Model residuals (i.e. the error, or how different the observed relationship between dog poop service requests and request volume is from the expected relationship) are a useful measure of which Community Districts have greater or fewer dog poop service requests than expected.
 
 ```{r}
-#| freeze: true
+#| cache: true
 
 mn_SRs_20_26 <- soc_read(
   "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
@@ -134,7 +134,7 @@ The linear regression of dog poop-related service requests as a function of over
 Given the basis for identifying Community District 12 as an area of concern, we can look for those blocks which have the highest number of requests as potential sites for further investigation:
 
 ```{r}
-#| freeze: true
+#| cache: true
 
 
 comDist12 <- read_sf("https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/NYC_Community_Districts/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=pgeojson") |> 
@@ -211,7 +211,8 @@ maplibre(style = carto_style("positron")) |>
   ) |>
   add_line_layer(
     id = "Top Blocks",
-    source = top_blocks,
+    source = comDist12_centerlines |> 
+      filter(objectid %in% top_blocks$objectid),
     line_color = "#b30000",
     line_width = 8
   ) |> 
@@ -228,11 +229,482 @@ maplibre(style = carto_style("positron")) |>
     )
   )
 ```
-  
+<br />
 The top 10 blocks (street segments, to be specific) represent **`r round(sum(top_blocks$n_dog_poop_SRs)/nrow(comDist12_dog_poop_SRs)*100,2)`%** of the dog poop-related Service Requests. Notably, there is a cluster of **360** Service Requests located on and around Riverside Drive between West 158th and West 160th streets.
 
 Based on the above, accurate, appropriately contextualized, and defensible messaging may be something like:
 
 > We crunched the numbers -- Since 2020, New Yorkers filed 80 to 360 more dog poop-related Service Requests in Manhattan Community District 12 than expected based on request volume. We decided to take a closer look. Over 60% of the service requests were filed on and around Riverside Drive between West 158th and West 160th streets. Other clusters of requests came from the West side of Hood Wright Park, Fort Washington Ave between West 187th and West 190th streets, near Hillside Ave and Borgardus Place, and on Seaman Ave between Dyckman and and Cumming Streets.
 
-Moving to looking at Dog License data, we'd similarly need to normalize the data at the zip code level by population.
+Having established Manhattan Community District 12 as a potential area of concern, let's turn our attention to hot spots of dog poop service requests in all of Manhattan's 12 community districts. 
+
+In doing so, we'll limit the time frame to **January 1, 2024 to December 31, 2025.**
+
+```{r}
+#| cache: true
+
+manhattan_comDist <- read_sf("https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/NYC_Community_Districts/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=pgeojson") |> 
+  st_make_valid() |> 
+  filter(BoroCD < 200) |> 
+  mutate(community_board = paste0(
+    str_sub(as.character(BoroCD), -2),
+    " MANHATTAN"
+  ))
+
+mn_wkt <- st_as_text(st_geometry(st_union(manhattan_comDist))[[1]])
+
+mn_dp_SRs_24_26 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    where = "borough = 'MANHATTAN'
+             AND created_date >= '2024-01-01T00:00:00'
+             AND created_date <  '2026-01-01T00:00:00'
+             AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))
+    "
+  )
+)
+
+mn_centerlines <- soc_read(
+  "https://data.cityofnewyork.us/City-Government/Centerline/inkn-q76z.json",
+  query = soc_query(
+    where = "boroughcode = '1'"
+  )
+) 
+
+mn_dp_SRs_24_26 <- mn_dp_SRs_24_26 |> 
+  st_join(
+    mn_centerlines |> select(objectid),
+    join = st_nearest_feature
+  )
+
+top_blocks_manhattan <- mn_dp_SRs_24_26 |> 
+  group_by(community_board, objectid) |> 
+  summarise(n_dog_poop_SRs = n()) |> 
+  arrange(desc(n_dog_poop_SRs)) |> 
+  slice(1:3) |> 
+  filter(!(community_board %in% c("64 MANHATTAN", "Unspecified MANHATTAN", "08 BRONX")))
+
+top_blocks_manhattan_counts <- top_blocks_manhattan |> 
+  st_drop_geometry() |> 
+  filter(community_board != "12 MANHATTAN") |> 
+  pull(n_dog_poop_SRs)
+
+waste_bag_dispensers <- soc_read(
+  "https://data.cityofnewyork.us/Recreation/Canine-Waste-Dispensers/5npv-j6gn.json",
+  query = soc_query(
+    where = "borough = 'M'"
+  )
+)
+
+mn_litter_basket <- soc_read(
+  "https://data.cityofnewyork.us/Environment/DSNY-Litter-Basket-Inventory/8znf-7b2c.json",
+  query = soc_query(
+    where = paste0(
+      "within_polygon(point, '",
+      mn_wkt,
+      "')"
+    )
+  )
+)
+```
+There were **`r scales::comma(nrow(mn_dp_SRs_24_26))`** dog poop-related Service Requests filed in Manhattan in 2024 and 2025. Similar to the map above, each service request was associated with the nearest city block. The blocks with the **three** highest counts of service requests are shown below. Aside from Community District 12, the range of highest service request counts per block is low, ranging from **`r max(top_blocks_manhattan_counts[seq(1,31,3)])`** to **`r min(top_blocks_manhattan_counts[seq(1,31,3)])`**. These blocks are shown highlighted in dark red and represent hot spots of dog-poop service requests per Community District.
+
+The locations of the **`r nrow(waste_bag_dispensers)`** dog waste bag dispensers in Manhattan are shown below in dark green. The majority of the dispensers are located in Community District 3. The small number of these dispensers makes it difficult to discern any trends with respect to Service Requests. With **`r scales::comma(nrow(mn_litter_basket))`** locations in Manhattan, DSNY-served litter baskets are much more prevalent than dog waste bag dispensers. The locations are shown in light green below, and are hidden by default. Use the layer control in the top right corner to turn the layer on. 
+
+
+```{r}
+#| out-width: 100%
+#| out-height: 1000px
+
+maplibre(style = carto_style("positron")) |> 
+  fit_bounds(manhattan_comDist) |> 
+  add_line_layer(
+    id = "Manhattan Community Districts",
+    source = manhattan_comDist,
+    line_color = "#888888",
+    line_width = 1
+  ) |> 
+  add_line_layer(
+    id = "Top Blocks",
+    source = mn_centerlines |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    line_color = "#b30000",
+    line_width = 8
+  ) |> 
+  add_circle_layer(
+    id = "Litter Baskets",
+    source = mn_litter_basket,
+    circle_color = "lightgreen",
+    circle_radius = 5,
+    visibility = "none"
+    #min_zoom = 16
+  )|> 
+  add_circle_layer(
+    id = "Service Requests",
+    source = mn_dp_SRs_24_26 |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    circle_color = "#444444",
+    circle_stroke_color = "#666666",
+    circle_radius = 10,
+    circle_stroke_width = 2,
+    cluster_options = cluster_options(
+      max_zoom = 14.5
+    )
+  ) |> 
+  add_circle_layer(
+    id = "Canine Waste Bag Dispensers",
+    source = waste_bag_dispensers,
+    circle_color = "green",
+    circle_radius = 5
+  ) |> 
+  add_layers_control(
+    layers = list(
+      "Litter Baskets" = "Litter Baskets"
+    ),
+    position = "top-right"
+  ) |> 
+  add_categorical_legend(
+    legend_title = "Point Layers",
+    values = c("Canine Waste Bag Dispensers",
+               "Litter Baskets"),
+    colors = c("green", "lightgreen"),
+    patch_shape = "circle",
+    style = list(
+      background_opacity = 0.8
+    )
+  )
+  
+  
+```
+<br />
+In general, litter baskets can be found at the intersections of most city streets. However, there are a few notable exceptions. 
+
+In Community District 12, there are relatively few litter baskets in the area immediately surrounding the cluster of dog poop service requests:
+```{r}
+#| out-width: 100%
+#| out-height: 700px
+
+maplibre(style = carto_style("positron"),
+         center = c(-73.94676835,40.83643540),
+         zoom = 16) |> 
+  add_line_layer(
+    id = "Manhattan Community Districts",
+    source = manhattan_comDist,
+    line_color = "#888888",
+    line_width = 1
+  ) |> 
+  add_line_layer(
+    id = "Top Blocks",
+    source = mn_centerlines |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    line_color = "#b30000",
+    line_width = 8
+  ) |> 
+  add_circle_layer(
+    id = "Litter Baskets",
+    source = mn_litter_basket,
+    circle_color = "lightgreen",
+    circle_radius = 5,
+    visibility = "visible"
+    #min_zoom = 16
+  )|> 
+  add_circle_layer(
+    id = "Service Requests",
+    source = mn_dp_SRs_24_26 |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    circle_color = "#444444",
+    circle_stroke_color = "#666666",
+    circle_radius = 10,
+    circle_stroke_width = 2,
+    cluster_options = cluster_options(
+      max_zoom = 17
+    )
+  ) |> 
+  add_circle_layer(
+    id = "Canine Waste Bag Dispensers",
+    source = waste_bag_dispensers,
+    circle_color = "green",
+    circle_radius = 5
+  ) |> 
+  add_layers_control(
+    layers = list(
+      "Litter Baskets" = "Litter Baskets"
+    ),
+    position = "top-right"
+  ) |> 
+  add_categorical_legend(
+    legend_title = "Point Layers",
+    values = c("Canine Waste Bag Dispensers",
+               "Litter Baskets"),
+    colors = c("green", "lightgreen"),
+    patch_shape = "circle",
+    style = list(
+      background_opacity = 0.8
+    )
+  )
+```
+<br />
+The same issue is seen in Community District 10 on West 142nd and 5th Ave:
+```{r}
+#| out-width: 100%
+#| out-height: 700px
+
+maplibre(style = carto_style("positron"),
+         center = c(-73.936006, 40.817830),
+         zoom = 15.5) |> 
+  add_line_layer(
+    id = "Manhattan Community Districts",
+    source = manhattan_comDist,
+    line_color = "#888888",
+    line_width = 1
+  ) |> 
+  add_line_layer(
+    id = "Top Blocks",
+    source = mn_centerlines |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    line_color = "#b30000",
+    line_width = 8
+  ) |> 
+  add_circle_layer(
+    id = "Litter Baskets",
+    source = mn_litter_basket,
+    circle_color = "lightgreen",
+    circle_radius = 5,
+    visibility = "visible"
+    #min_zoom = 16
+  )|> 
+  add_circle_layer(
+    id = "Service Requests",
+    source = mn_dp_SRs_24_26 |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    circle_color = "#444444",
+    circle_stroke_color = "#666666",
+    circle_radius = 10,
+    circle_stroke_width = 2,
+    cluster_options = cluster_options(
+      max_zoom = 17
+    )
+  ) |> 
+  add_circle_layer(
+    id = "Canine Waste Bag Dispensers",
+    source = waste_bag_dispensers,
+    circle_color = "green",
+    circle_radius = 5
+  ) |> 
+  add_layers_control(
+    layers = list(
+      "Litter Baskets" = "Litter Baskets"
+    ),
+    position = "top-right"
+  ) |> 
+  add_categorical_legend(
+    legend_title = "Point Layers",
+    values = c("Canine Waste Bag Dispensers",
+               "Litter Baskets"),
+    colors = c("green", "lightgreen"),
+    patch_shape = "circle",
+    style = list(
+      background_opacity = 0.8
+    )
+  )
+```
+<br />
+There's only one litter basket north of Central Park on Adam Clayton Powell Jr. Boulevard south of West 115th Street:
+
+```{r}
+#| out-width: 100%
+#| out-height: 700px
+
+maplibre(style = carto_style("positron"),
+         center = c(-73.95443343, 40.80068412),
+         zoom = 15.5) |> 
+  add_line_layer(
+    id = "Manhattan Community Districts",
+    source = manhattan_comDist,
+    line_color = "#888888",
+    line_width = 1
+  ) |> 
+  add_line_layer(
+    id = "Top Blocks",
+    source = mn_centerlines |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    line_color = "#b30000",
+    line_width = 8
+  ) |> 
+  add_circle_layer(
+    id = "Litter Baskets",
+    source = mn_litter_basket,
+    circle_color = "lightgreen",
+    circle_radius = 5,
+    visibility = "visible"
+    #min_zoom = 16
+  )|> 
+  add_circle_layer(
+    id = "Service Requests",
+    source = mn_dp_SRs_24_26 |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    circle_color = "#444444",
+    circle_stroke_color = "#666666",
+    circle_radius = 10,
+    circle_stroke_width = 2,
+    cluster_options = cluster_options(
+      max_zoom = 17
+    )
+  ) |> 
+  add_circle_layer(
+    id = "Canine Waste Bag Dispensers",
+    source = waste_bag_dispensers,
+    circle_color = "green",
+    circle_radius = 5
+  ) |> 
+  add_layers_control(
+    layers = list(
+      "Litter Baskets" = "Litter Baskets"
+    ),
+    position = "top-right"
+  ) |> 
+  add_categorical_legend(
+    legend_title = "Point Layers",
+    values = c("Canine Waste Bag Dispensers",
+               "Litter Baskets"),
+    colors = c("green", "lightgreen"),
+    patch_shape = "circle",
+    style = list(
+      background_opacity = 0.8
+    )
+  )
+```
+<br />
+There's less litter basket density around the Tudor City hotspot than in surrounding areas:
+
+```{r}
+#| out-width: 100%
+#| out-height: 700px
+
+maplibre(style = carto_style("positron"),
+         center = c(-73.97300990, 40.74680816),
+         zoom = 15.5) |> 
+  add_line_layer(
+    id = "Manhattan Community Districts",
+    source = manhattan_comDist,
+    line_color = "#888888",
+    line_width = 1
+  ) |> 
+  add_line_layer(
+    id = "Top Blocks",
+    source = mn_centerlines |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    line_color = "#b30000",
+    line_width = 8
+  ) |> 
+  add_circle_layer(
+    id = "Litter Baskets",
+    source = mn_litter_basket,
+    circle_color = "lightgreen",
+    circle_radius = 5,
+    visibility = "visible"
+    #min_zoom = 16
+  )|> 
+  add_circle_layer(
+    id = "Service Requests",
+    source = mn_dp_SRs_24_26 |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    circle_color = "#444444",
+    circle_stroke_color = "#666666",
+    circle_radius = 10,
+    circle_stroke_width = 2,
+    cluster_options = cluster_options(
+      max_zoom = 17
+    )
+  ) |> 
+  add_circle_layer(
+    id = "Canine Waste Bag Dispensers",
+    source = waste_bag_dispensers,
+    circle_color = "green",
+    circle_radius = 5
+  ) |> 
+  add_layers_control(
+    layers = list(
+      "Litter Baskets" = "Litter Baskets"
+    ),
+    position = "top-right"
+  ) |> 
+  add_categorical_legend(
+    legend_title = "Point Layers",
+    values = c("Canine Waste Bag Dispensers",
+               "Litter Baskets"),
+    colors = c("green", "lightgreen"),
+    patch_shape = "circle",
+    style = list(
+      background_opacity = 0.8
+    )
+  )
+```
+<br />
+The same is true for the cluster south of 1 Centre St: 
+
+```{r}
+#| out-width: 100%
+#| out-height: 700px
+
+maplibre(style = carto_style("positron"),
+         center = c(-74.005017, 40.710385),
+         zoom = 16) |> 
+  add_line_layer(
+    id = "Manhattan Community Districts",
+    source = manhattan_comDist,
+    line_color = "#888888",
+    line_width = 1
+  ) |> 
+  add_line_layer(
+    id = "Top Blocks",
+    source = mn_centerlines |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    line_color = "#b30000",
+    line_width = 8
+  ) |> 
+  add_circle_layer(
+    id = "Litter Baskets",
+    source = mn_litter_basket,
+    circle_color = "lightgreen",
+    circle_radius = 5,
+    visibility = "visible"
+    #min_zoom = 16
+  )|> 
+  add_circle_layer(
+    id = "Service Requests",
+    source = mn_dp_SRs_24_26 |> 
+      filter(objectid %in% top_blocks_manhattan$objectid),
+    circle_color = "#444444",
+    circle_stroke_color = "#666666",
+    circle_radius = 10,
+    circle_stroke_width = 2,
+    cluster_options = cluster_options(
+      max_zoom = 17
+    )
+  ) |> 
+  add_circle_layer(
+    id = "Canine Waste Bag Dispensers",
+    source = waste_bag_dispensers,
+    circle_color = "green",
+    circle_radius = 5
+  ) |> 
+  add_layers_control(
+    layers = list(
+      "Litter Baskets" = "Litter Baskets"
+    ),
+    position = "top-right"
+  ) |> 
+  add_categorical_legend(
+    legend_title = "Point Layers",
+    values = c("Canine Waste Bag Dispensers",
+               "Litter Baskets"),
+    colors = c("green", "lightgreen"),
+    patch_shape = "circle",
+    style = list(
+      background_opacity = 0.8
+    )
+  )
+```
+
+In the quest to address stubborn quality of life issues in Manhattan, a futher exploration of litter basket deserts may be of interest as the call to action (i.e. the installation of more baskets) is straightforward.

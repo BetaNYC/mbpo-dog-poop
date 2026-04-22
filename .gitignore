@@ -6,3 +6,5 @@
 .Renviron
 **/*.quarto_ipynb
 /index_cache/
+/index_files/
+/_freeze/
