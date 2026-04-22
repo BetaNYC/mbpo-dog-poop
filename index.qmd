@@ -706,5 +706,6 @@ maplibre(style = carto_style("positron"),
     )
   )
 ```
-
+<br />
 In the quest to address stubborn quality of life issues in Manhattan, a futher exploration of litter basket deserts may be of interest as the call to action (i.e. the installation of more baskets) is straightforward.
+
