@@ -476,7 +476,7 @@ maplibre(style = carto_style("positron")) |>
   )
 ```
 <br />
-In general, litter baskets can be found at the intersections of most city streets. However, there are a few notable exceptions. 
+In general, litter baskets can be found at the intersections of most city streets. However, there are a few notable exceptions. Rather than just displaying clusters of dog poop Service Requests, the below maps display all dog poop Service requests filed between January 1, 2024 and April 19, 2026.
 
 In Community District 12, there are relatively few litter baskets in the area immediately surrounding the cluster of dog poop service requests:
 ```{r}
