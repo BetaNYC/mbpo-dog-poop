@@ -4,6 +4,7 @@ library(tidyverse)
 library(socratadata)
 library(lubridate)
 library(ggrepel)
+library(mapview)
 
 
 readRenviron(".Renviron")
@@ -140,6 +141,45 @@ mn_SRs_20_26_countOnly <- soc_read(
 comDist12_centerlines |> group_by(b5sc) |> summarize(the_geom = st_union(the_geom)) |> st_write("union_test.geojson")
 # too big
 
+manhattan_comDist <- read_sf("https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/NYC_Community_Districts/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=pgeojson") |> 
+  st_make_valid() |> 
+  filter(BoroCD < 200) |> 
+  mutate(community_board = paste0(
+    str_sub(as.character(BoroCD), -2),
+    " MANHATTAN"
+  ))
+
+mn_dp_SRs_24_26 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    where = "borough = 'MANHATTAN'
+             AND created_date >= '2024-01-01T00:00:00'
+             AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))
+    "
+  )
+)
+
+mn_wkt <- st_as_text(st_geometry(st_union(manhattan_comDist))[[1]])
+
+comDist12_dog_poop_SRs <- comDist12_dog_poop_SRs |> 
+  st_join(
+    comDist12_centerlines |> select(objectid),
+    join = st_nearest_feature
+  )
 
 
-  
+top_blocks <- comDist12_dog_poop_SRs |> 
+  group_by(objectid) |> 
+  summarize(n_dog_poop_SRs = n()) |> 
+  arrange(desc(n_dog_poop_SRs)) |> 
+  head(10)
+
+
+top_blocks_manhattan_counts <- top_blocks_manhattan |> 
+  st_drop_geometry() |> 
+  filter(community_board != "12 MANHATTAN") |> 
+  pull(n_dog_poop_SRs)
+
+q[seq(3,34,3)]
+
+max(top_blocks_manhattan_counts[seq(1,31,3)])

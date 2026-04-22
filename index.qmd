@@ -59,8 +59,78 @@ dog_poop_sr |>
   align(j = 1, align = "left", part = "all")
 ```
 
-Between **`r min_date`** and **`r max_date`**, there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed in Manhattan. Dog poop-related service requests accounted for **`r round(n_complaints/mn_SRs_20_26_countOnly[[1,1]][1] *100,2)`%** of all service requests filed in Manhattan for the same time period. Despite this, the presence of dog poop on city streets is a top-of-mind quality of life issue for many New Yorkers. 
+Between **`r min_date`** and **`r max_date`**, there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed in Manhattan. Dog poop-related service requests accounted for **`r round(n_complaints/mn_SRs_20_26_countOnly[[1,1]][1] *100,2)`%** of all service requests filed in Manhattan for the same time period. 
 
+A clear annual trend is visible when aggregating these service requests to year and month:
+```{r}
+#| out-width: 100%
+
+
+monthly_dog_poop_complaints <-  dog_poop_complaints |> 
+  st_drop_geometry() |> 
+  group_by(yearMonth = paste0(
+    year(created_date),
+                  "-",
+                  str_split_i(date(created_date),
+                              "-",
+                              2))) |> 
+  summarize(monthly_complaints = n()) |> 
+  ungroup() |> 
+  # Pin to first of month for plotting
+  mutate(date = as.Date(paste0(yearMonth, "-01")))
+
+ggplot() +
+  geom_point(data = monthly_dog_poop_complaints,
+       aes(x = date,
+           y = monthly_complaints))+
+  scale_x_date(
+    date_breaks = "1 year",
+    date_minor_breaks = "1 month",
+    date_labels = "%Y"
+  ) +
+  labs(x = "Date (Year, Month)",
+       y = "Dog Poop Service Requests")
+```
+
+Since 2022, dog poop-related 311 service requests have tended to be highest in January, February, and March, with a decreasing trend throughout the calendar year. 2024 is an exception to this trend; the count of service requests increased throughout the calendar year. 
+
+Based on the peak winter months in 2022, 2023, and 2025, the overall volume of dog-poop service requests in Manhattan appears to be increasing.
+
+The back-to-back snowstorms in February of 2026 appear to have led to approximately three times the number of dog poop related service requests than in February of 2025.
+
+An annual trend is less apparent when considering Manhattan Service Requests of all types during the same time period:
+
+```{r}
+#| cache: true
+#| out-width: 100%
+
+
+mn_complaints_byMonthYear <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
+  query = soc_query(
+    select = "date_trunc_ym(created_date) AS year_month, count(*) AS monthly_complaints",
+    where  = "borough = 'MANHATTAN'",
+    group  = "date_trunc_ym(created_date)",
+    order  = "year_month"
+  )
+)
+
+ggplot() +
+  geom_point(data = mn_complaints_byMonthYear,
+             aes(x = as.Date(year_month),
+                 y = monthly_complaints)) +
+  scale_x_date(
+    date_breaks = "1 year",
+    date_minor_breaks = "1 month",
+    date_labels = "%Y"
+  ) +
+  scale_y_continuous(
+    label = comma
+  ) +
+  labs(x = "Date (Year, Month)",
+       y = "All Service Requests")
+```
+<br />
 When considering the spatial variation in a particular Service Request type as it relates to quality of life concerns at a given geographic unit (here, Community Districts are used), two factors must be considered: 
 
 - 311 Service Request data are records of citizen interaction with a government system, not direct observation of the associated phenomenon, and
@@ -68,7 +138,7 @@ When considering the spatial variation in a particular Service Request type as i
 
 [^1]: [Minkoff, Scott L. "NYC 311: A tract-level analysis of citizen–government contacting in New York City." Urban Affairs Review 52.2 (2016): 211-246.](https://doi.org/10.1177/1078087415577796)
 
-Therefore, when considering the variation in dog poop-related Service Requests across Manhattan Community Districts, it must be reiterated that this is not an actual measure of dog poop on Manhattan streets. We also expect that Service Request volume will largely account for the variation in dog poop Service Requests -- Where it doesn't warrants further investigation. 
+Therefore, when considering the variation in dog poop-related Service Requests across Manhattan Community Districts, it must be reiterated that this is not an actual measure of dog poop on Manhattan streets. We also expect that Service Request volume will largely account for the variation in dog poop Service Requests. Areas where this trend doesn't hold warrant further investigation. 
 
 A linear model of dog poop service requests as a function of service request volume at the Community District level allows for an evaluation of the above relationship. Model residuals (i.e. the error, or how different the observed relationship between dog poop service requests and request volume is from the expected relationship) are a useful measure of which Community Districts have greater or fewer dog poop service requests than expected.
 
@@ -238,7 +308,7 @@ Based on the above, accurate, appropriately contextualized, and defensible messa
 
 Having established Manhattan Community District 12 as a potential area of concern, let's turn our attention to hot spots of dog poop service requests in all of Manhattan's 12 community districts. 
 
-In doing so, we'll limit the time frame to **January 1, 2024 to December 31, 2025.**
+In doing so, we'll limit the time frame to **January 1, 2024 to 2026 year to date**
 
 ```{r}
 #| cache: true
@@ -258,7 +328,6 @@ mn_dp_SRs_24_26 <- soc_read(
   query = soc_query(
     where = "borough = 'MANHATTAN'
              AND created_date >= '2024-01-01T00:00:00'
-             AND created_date <  '2026-01-01T00:00:00'
              AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))
     "
   )
@@ -306,10 +375,28 @@ mn_litter_basket <- soc_read(
     )
   )
 )
-```
-There were **`r scales::comma(nrow(mn_dp_SRs_24_26))`** dog poop-related Service Requests filed in Manhattan in 2024 and 2025. Similar to the map above, each service request was associated with the nearest city block. The blocks with the **three** highest counts of service requests are shown below. Aside from Community District 12, the range of highest service request counts per block is low, ranging from **`r max(top_blocks_manhattan_counts[seq(1,31,3)])`** to **`r min(top_blocks_manhattan_counts[seq(1,31,3)])`**. These blocks are shown highlighted in dark red and represent hot spots of dog-poop service requests per Community District.
 
-The locations of the **`r nrow(waste_bag_dispensers)`** dog waste bag dispensers in Manhattan are shown below in dark green. The majority of the dispensers are located in Community District 3. The small number of these dispensers makes it difficult to discern any trends with respect to Service Requests. With **`r scales::comma(nrow(mn_litter_basket))`** locations in Manhattan, DSNY-served litter baskets are much more prevalent than dog waste bag dispensers. The locations are shown in light green below, and are hidden by default. Use the layer control in the top right corner to turn the layer on. 
+mn_pops <- soc_read(
+  "https://data.cityofnewyork.us/City-Government/Privately-Owned-Public-Spaces-POPS-/rvih-nhyn.json",
+  query = soc_query(
+    where = "borough_name = 'Manhattan'"
+  )
+)
+
+mn_dog_runs <- soc_read(
+  "https://data.cityofnewyork.us/Recreation/Dog-Runs/hxx3-bwgv.json",
+  query = soc_query(
+    where = paste0(
+      "within_polygon(the_geom, '",
+      mn_wkt,
+      "')"
+    )
+  )
+)
+```
+There were **`r scales::comma(nrow(mn_dp_SRs_24_26))`** dog poop-related Service Requests filed in Manhattan From January 1, 2024 to April 19, 2026. Similar to the map above, each service request was associated with the nearest city block. The blocks with the **three** highest counts of service requests are shown below. Aside from Community District 12, the range of highest service request counts per block is low, ranging from **`r max(top_blocks_manhattan_counts[seq(1,31,3)])`** to **`r min(top_blocks_manhattan_counts[seq(1,31,3)])`**. These blocks are shown highlighted in dark red and represent hot spots of dog-poop service requests per Community District.
+
+The locations of the **`r nrow(waste_bag_dispensers)`** dog waste bag dispensers in Manhattan are shown below in dark green. The majority of the dispensers are located in Community District 3. The small number of these dispensers makes it difficult to discern any trends with respect to Service Requests. With **`r scales::comma(nrow(mn_litter_basket))`** locations in Manhattan, DSNY-served litter baskets are much more prevalent than dog waste bag dispensers. The locations are shown in light green below, and are hidden by default. Use the layer control in the top right corner to turn the layer on. Litter baskets in NYC Parks or Privately-Owned Public spaces (POPs) are not shown due to a lack of data availability. The location of POPs may also be turned on using the map's layer control. 
 
 
 ```{r}
@@ -324,12 +411,24 @@ maplibre(style = carto_style("positron")) |>
     line_color = "#888888",
     line_width = 1
   ) |> 
+  add_fill_layer(
+    id = "Dog Runs",
+    source = mn_dog_runs,
+    fill_color = "#ff83fb"
+  ) |> 
   add_line_layer(
     id = "Top Blocks",
     source = mn_centerlines |> 
       filter(objectid %in% top_blocks_manhattan$objectid),
     line_color = "#b30000",
     line_width = 8
+  ) |> 
+  add_circle_layer(
+    id = "pops",
+    source = mn_pops,
+    circle_color = "orange",
+    circle_radius = 5,
+    visibility = "none"
   ) |> 
   add_circle_layer(
     id = "Litter Baskets",
@@ -359,22 +458,22 @@ maplibre(style = carto_style("positron")) |>
   ) |> 
   add_layers_control(
     layers = list(
-      "Litter Baskets" = "Litter Baskets"
+      "Litter Baskets" = "Litter Baskets",
+      "POPs" = "pops"
     ),
     position = "top-right"
   ) |> 
   add_categorical_legend(
-    legend_title = "Point Layers",
+    legend_title = "Layers",
     values = c("Canine Waste Bag Dispensers",
-               "Litter Baskets"),
-    colors = c("green", "lightgreen"),
+               "Litter Baskets",
+               "POPs", "Dog Runs"),
+    colors = c("green", "lightgreen", "orange", "#ff83fb"),
     patch_shape = "circle",
     style = list(
       background_opacity = 0.8
     )
   )
-  
-  
 ```
 <br />
 In general, litter baskets can be found at the intersections of most city streets. However, there are a few notable exceptions. 
@@ -393,12 +492,17 @@ maplibre(style = carto_style("positron"),
     line_color = "#888888",
     line_width = 1
   ) |> 
-  add_line_layer(
-    id = "Top Blocks",
-    source = mn_centerlines |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    line_color = "#b30000",
-    line_width = 8
+  add_fill_layer(
+    id = "Dog Runs",
+    source = mn_dog_runs,
+    fill_color = "#ff83fb"
+  ) |> 
+  add_circle_layer(
+    id = "pops",
+    source = mn_pops,
+    circle_color = "orange",
+    circle_radius = 5,
+    visibility = "visible"
   ) |> 
   add_circle_layer(
     id = "Litter Baskets",
@@ -410,14 +514,11 @@ maplibre(style = carto_style("positron"),
   )|> 
   add_circle_layer(
     id = "Service Requests",
-    source = mn_dp_SRs_24_26 |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    circle_color = "#444444",
-    circle_stroke_color = "#666666",
+    source = mn_dp_SRs_24_26,
+    circle_color = "#b30000",
     circle_radius = 10,
-    circle_stroke_width = 2,
     cluster_options = cluster_options(
-      max_zoom = 17
+      max_zoom = 15.5
     )
   ) |> 
   add_circle_layer(
@@ -428,15 +529,17 @@ maplibre(style = carto_style("positron"),
   ) |> 
   add_layers_control(
     layers = list(
-      "Litter Baskets" = "Litter Baskets"
+      "Litter Baskets" = "Litter Baskets",
+      "POPs" = "pops"
     ),
     position = "top-right"
   ) |> 
   add_categorical_legend(
-    legend_title = "Point Layers",
-    values = c("Canine Waste Bag Dispensers",
-               "Litter Baskets"),
-    colors = c("green", "lightgreen"),
+    legend_title = "Layers",
+    values = c("Dog Poop Service Requests","Canine Waste Bag Dispensers",
+               "Litter Baskets",
+               "POPs", "Dog Runs"),
+    colors = c("#b30000","green", "lightgreen", "orange", "#ff83fb"),
     patch_shape = "circle",
     style = list(
       background_opacity = 0.8
@@ -458,12 +561,17 @@ maplibre(style = carto_style("positron"),
     line_color = "#888888",
     line_width = 1
   ) |> 
-  add_line_layer(
-    id = "Top Blocks",
-    source = mn_centerlines |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    line_color = "#b30000",
-    line_width = 8
+  add_fill_layer(
+    id = "Dog Runs",
+    source = mn_dog_runs,
+    fill_color = "#ff83fb"
+  ) |> 
+  add_circle_layer(
+    id = "pops",
+    source = mn_pops,
+    circle_color = "orange",
+    circle_radius = 5,
+    visibility = "visible"
   ) |> 
   add_circle_layer(
     id = "Litter Baskets",
@@ -475,14 +583,11 @@ maplibre(style = carto_style("positron"),
   )|> 
   add_circle_layer(
     id = "Service Requests",
-    source = mn_dp_SRs_24_26 |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    circle_color = "#444444",
-    circle_stroke_color = "#666666",
+    source = mn_dp_SRs_24_26,
+    circle_color = "#b30000",
     circle_radius = 10,
-    circle_stroke_width = 2,
     cluster_options = cluster_options(
-      max_zoom = 17
+      max_zoom = 15.5
     )
   ) |> 
   add_circle_layer(
@@ -493,15 +598,17 @@ maplibre(style = carto_style("positron"),
   ) |> 
   add_layers_control(
     layers = list(
-      "Litter Baskets" = "Litter Baskets"
+      "Litter Baskets" = "Litter Baskets",
+      "POPs" = "pops"
     ),
     position = "top-right"
   ) |> 
   add_categorical_legend(
-    legend_title = "Point Layers",
-    values = c("Canine Waste Bag Dispensers",
-               "Litter Baskets"),
-    colors = c("green", "lightgreen"),
+    legend_title = "Layers",
+    values = c("Dog Poop Service Requests","Canine Waste Bag Dispensers",
+               "Litter Baskets",
+               "POPs", "Dog Runs"),
+    colors = c("#b30000","green", "lightgreen", "orange", "#ff83fb"),
     patch_shape = "circle",
     style = list(
       background_opacity = 0.8
@@ -524,12 +631,17 @@ maplibre(style = carto_style("positron"),
     line_color = "#888888",
     line_width = 1
   ) |> 
-  add_line_layer(
-    id = "Top Blocks",
-    source = mn_centerlines |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    line_color = "#b30000",
-    line_width = 8
+  add_fill_layer(
+    id = "Dog Runs",
+    source = mn_dog_runs,
+    fill_color = "#ff83fb"
+  ) |> 
+  add_circle_layer(
+    id = "pops",
+    source = mn_pops,
+    circle_color = "orange",
+    circle_radius = 5,
+    visibility = "visible"
   ) |> 
   add_circle_layer(
     id = "Litter Baskets",
@@ -541,14 +653,11 @@ maplibre(style = carto_style("positron"),
   )|> 
   add_circle_layer(
     id = "Service Requests",
-    source = mn_dp_SRs_24_26 |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    circle_color = "#444444",
-    circle_stroke_color = "#666666",
+    source = mn_dp_SRs_24_26,
+    circle_color = "#b30000",
     circle_radius = 10,
-    circle_stroke_width = 2,
     cluster_options = cluster_options(
-      max_zoom = 17
+      max_zoom = 15.5
     )
   ) |> 
   add_circle_layer(
@@ -559,15 +668,17 @@ maplibre(style = carto_style("positron"),
   ) |> 
   add_layers_control(
     layers = list(
-      "Litter Baskets" = "Litter Baskets"
+      "Litter Baskets" = "Litter Baskets",
+      "POPs" = "pops"
     ),
     position = "top-right"
   ) |> 
   add_categorical_legend(
-    legend_title = "Point Layers",
-    values = c("Canine Waste Bag Dispensers",
-               "Litter Baskets"),
-    colors = c("green", "lightgreen"),
+    legend_title = "Layers",
+    values = c("Dog Poop Service Requests","Canine Waste Bag Dispensers",
+               "Litter Baskets",
+               "POPs", "Dog Runs"),
+    colors = c("#b30000","green", "lightgreen", "orange", "#ff83fb"),
     patch_shape = "circle",
     style = list(
       background_opacity = 0.8
@@ -590,12 +701,17 @@ maplibre(style = carto_style("positron"),
     line_color = "#888888",
     line_width = 1
   ) |> 
-  add_line_layer(
-    id = "Top Blocks",
-    source = mn_centerlines |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    line_color = "#b30000",
-    line_width = 8
+  add_fill_layer(
+    id = "Dog Runs",
+    source = mn_dog_runs,
+    fill_color = "#ff83fb"
+  ) |> 
+  add_circle_layer(
+    id = "pops",
+    source = mn_pops,
+    circle_color = "orange",
+    circle_radius = 5,
+    visibility = "visible"
   ) |> 
   add_circle_layer(
     id = "Litter Baskets",
@@ -607,14 +723,11 @@ maplibre(style = carto_style("positron"),
   )|> 
   add_circle_layer(
     id = "Service Requests",
-    source = mn_dp_SRs_24_26 |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    circle_color = "#444444",
-    circle_stroke_color = "#666666",
+    source = mn_dp_SRs_24_26,
+    circle_color = "#b30000",
     circle_radius = 10,
-    circle_stroke_width = 2,
     cluster_options = cluster_options(
-      max_zoom = 17
+      max_zoom = 15.5
     )
   ) |> 
   add_circle_layer(
@@ -625,15 +738,17 @@ maplibre(style = carto_style("positron"),
   ) |> 
   add_layers_control(
     layers = list(
-      "Litter Baskets" = "Litter Baskets"
+      "Litter Baskets" = "Litter Baskets",
+      "POPs" = "pops"
     ),
     position = "top-right"
   ) |> 
   add_categorical_legend(
-    legend_title = "Point Layers",
-    values = c("Canine Waste Bag Dispensers",
-               "Litter Baskets"),
-    colors = c("green", "lightgreen"),
+    legend_title = "Layers",
+    values = c("Dog Poop Service Requests","Canine Waste Bag Dispensers",
+               "Litter Baskets",
+               "POPs", "Dog Runs"),
+    colors = c("#b30000","green", "lightgreen", "orange", "#ff83fb"),
     patch_shape = "circle",
     style = list(
       background_opacity = 0.8
@@ -656,12 +771,17 @@ maplibre(style = carto_style("positron"),
     line_color = "#888888",
     line_width = 1
   ) |> 
-  add_line_layer(
-    id = "Top Blocks",
-    source = mn_centerlines |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    line_color = "#b30000",
-    line_width = 8
+  add_fill_layer(
+    id = "Dog Runs",
+    source = mn_dog_runs,
+    fill_color = "#ff83fb"
+  ) |> 
+  add_circle_layer(
+    id = "pops",
+    source = mn_pops,
+    circle_color = "orange",
+    circle_radius = 5,
+    visibility = "visible"
   ) |> 
   add_circle_layer(
     id = "Litter Baskets",
@@ -673,14 +793,11 @@ maplibre(style = carto_style("positron"),
   )|> 
   add_circle_layer(
     id = "Service Requests",
-    source = mn_dp_SRs_24_26 |> 
-      filter(objectid %in% top_blocks_manhattan$objectid),
-    circle_color = "#444444",
-    circle_stroke_color = "#666666",
+    source = mn_dp_SRs_24_26,
+    circle_color = "#b30000",
     circle_radius = 10,
-    circle_stroke_width = 2,
     cluster_options = cluster_options(
-      max_zoom = 17
+      max_zoom = 15.5
     )
   ) |> 
   add_circle_layer(
@@ -691,15 +808,17 @@ maplibre(style = carto_style("positron"),
   ) |> 
   add_layers_control(
     layers = list(
-      "Litter Baskets" = "Litter Baskets"
+      "Litter Baskets" = "Litter Baskets",
+      "POPs" = "pops"
     ),
     position = "top-right"
   ) |> 
   add_categorical_legend(
-    legend_title = "Point Layers",
-    values = c("Canine Waste Bag Dispensers",
-               "Litter Baskets"),
-    colors = c("green", "lightgreen"),
+    legend_title = "Layers",
+    values = c("Dog Poop Service Requests","Canine Waste Bag Dispensers",
+               "Litter Baskets",
+               "POPs", "Dog Runs"),
+    colors = c("#b30000","green", "lightgreen", "orange", "#ff83fb"),
     patch_shape = "circle",
     style = list(
       background_opacity = 0.8
@@ -707,5 +826,5 @@ maplibre(style = carto_style("positron"),
   )
 ```
 <br />
-In the quest to address stubborn quality of life issues in Manhattan, a futher exploration of litter basket deserts may be of interest as the call to action (i.e. the installation of more baskets) is straightforward.
+In the quest to address stubborn quality of life issues in Manhattan, a further exploration of litter basket deserts may be of interest as the call to action (i.e. the installation of more baskets) is straightforward.
 
