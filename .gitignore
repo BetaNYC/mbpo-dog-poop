@@ -8,3 +8,5 @@
 /index_cache/
 /index_files/
 /_freeze/
+.Rhistory
+archive
