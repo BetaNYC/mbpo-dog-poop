@@ -96,7 +96,7 @@ dog_poop_sr |>
   align(j = 1, align = "left", part = "all")
 ```
 
-The two winter storms of early 2026 led to a **`r winter_storm_increase_pct`%** increase in dog poop complaints citywide. On February `r max_day` alone, residents filed **`r max_complaints`** complaints.
+The two winter storms of early 2026 led to a **`r winter_storm_increase_pct`%** increase in dog poop complaints citywide; New Yorkers filed **`r nrow(dog_poop_nyc_feb25)`** in February 2025 and **`r scales::comma(nrow(dog_poop_nyc_feb26))`** in February 2026. On February `r max_day` alone, residents filed **`r max_complaints`** complaints.
 
 Taking a closer look at Manhattan, there were there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed between **`r min_date`** and **`r max_date`**.
 
