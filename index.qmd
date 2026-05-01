@@ -178,6 +178,9 @@ ggplot() +
 From January 1, 2020 to April 2026, Dog poop-related service requests accounted for **`r round(n_complaints/mn_SRs_20_26_countOnly[[1,1]][1] *100,2)`%** of all service requests filed in Manhattan. While low, the share of dog poop related service requests in Manhattan has been increasing since 2020, reaching a high of ~0.5% in February 2026, as shown by the loess curve (blue, 95% confidence interval also shown) applied to monthly share:
 
 ```{r}
+#| out-width: 100%
+
+
 mn_dp_complaints_byMonthYear <- soc_read(
   "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
   query = soc_query(
