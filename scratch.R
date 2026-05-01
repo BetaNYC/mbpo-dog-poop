@@ -183,3 +183,71 @@ top_blocks_manhattan_counts <- top_blocks_manhattan |>
 q[seq(3,34,3)]
 
 max(top_blocks_manhattan_counts[seq(1,31,3)])
+
+mn_dp_SRs_24_26 |> 
+  filter(date(created_date) == "2026-02-11") |> 
+  nrow()
+
+
+nyc_dp_20260211 <- mn_dp_SRs_24_26 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    where = "created_date >= '2026-02-11T00:00:00' AND created_date < '2026-02-12T00:00:00'
+             AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))
+    "
+  )
+)
+
+
+nyc_dp_winter24_25 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    where = "created_date >= '2024-12-01T00:00:00' AND created_date < '2025-04-15T00:00:00'
+             AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))
+    "
+  )
+)
+nyc_dp_winter25_26 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    where = "created_date >= '2025-12-01T00:00:00' AND created_date < '2026-04-15T00:00:00'
+             AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))
+    "
+  )
+)
+
+
+riverside_wkt <- "POLYGON ((-73.94847 40.836411, -73.94449 40.834739, -73.943235 40.836663, -73.946979 40.838205, -73.947634 40.837759, -73.948063 40.837394, -73.948309 40.837028, -73.94847 40.836411))"
+
+
+riverside_dp_24_25 <- soc_read(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  query = soc_query(
+    where = paste0(
+      "within_polygon(location, '",
+      riverside_wkt,
+      "') AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))"
+    )
+  )
+)
+
+
+riverside_dp_24_25 |> 
+  filter(date(created_date) >= "2024-01-01" & date(created_date) < "2024-07-01") |> 
+  nrow()
+
+riverside_dp_24_25 |> 
+  filter(date(created_date) >= "2025-01-01" & date(created_date) < "2025-07-01") |> 
+  nrow()
+
+all_mn_complaints <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9.json",
+  query = soc_query(
+    where = "borough = 'MANHATTAN'"
+  )
+)
+
+dog_poop_nyc_feb26_dailyCounts |> 
+  filter(complaints == max(complaints)) |> 
+  pull(`day(created_date)`)
+

@@ -26,14 +26,51 @@ library(ggrepel)
 readRenviron(".Renviron")
 ```
 
-Per its data dictionary on [NYC Open Data](https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data), New York City's 311 program includes **5,963** specific Service Request (SR) types that can be directed to specific agencies. Of these nearly 6,000 ways to formally complain to the city, exactly six relate to dog poop. They are:
+Per its data dictionary on [NYC Open Data](https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data), New York City's 311 program includes **5,963** specific Service Request (SR) types that can be directed to city agencies. Of these nearly 6,000 ways to formally complain to the city, exactly six relate to dog poop. They are:
 
 ```{r}
 #| cache: true
 
-
+# Service request types
 dog_poop_sr <- read_csv("dog_poop_SRs.csv")
 
+# Citywide dog poop complaints, Feb 2025
+dog_poop_nyc_feb25 <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9.json",
+  query = soc_query(
+    where = "created_date >= '2025-02-01T00:00:00' AND 
+             created_date < '2025-03-01T00:00:00' AND 
+             ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))"
+  )
+)
+
+# Citywide dog poop complaints, Feb 2026
+dog_poop_nyc_feb26 <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9.json",
+  query = soc_query(
+    where = "created_date >= '2026-02-01T00:00:00' AND 
+             created_date < '2026-03-01T00:00:00' AND 
+             ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))"
+  )
+)
+
+# Feb 2026 daily complaint counts
+dog_poop_nyc_feb26_dailyCounts <- dog_poop_nyc_feb26 |> 
+  group_by(day(created_date)) |> 
+  summarize(complaints = n())
+
+max_day <- dog_poop_nyc_feb26_dailyCounts |> 
+  filter(complaints == max(complaints)) |> 
+  pull(`day(created_date)`)
+
+max_complaints <- dog_poop_nyc_feb26_dailyCounts |> 
+  filter(complaints == max(complaints)) |> 
+  pull(`complaints`)
+
+# Percent increase
+winter_storm_increase_pct <- round((nrow(dog_poop_nyc_feb26) - nrow(dog_poop_nyc_feb25)) / nrow(dog_poop_nyc_feb25) * 100, 0)
+
+# Manhattan dog poop SRs, 2020 - Present
 dog_poop_complaints <- soc_read(
   "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
   query = soc_query(
@@ -59,7 +96,9 @@ dog_poop_sr |>
   align(j = 1, align = "left", part = "all")
 ```
 
-Between **`r min_date`** and **`r max_date`**, there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed in Manhattan. Dog poop-related service requests accounted for **`r round(n_complaints/mn_SRs_20_26_countOnly[[1,1]][1] *100,2)`%** of all service requests filed in Manhattan for the same time period. 
+The two winter storms of early 2026 led to a **`r winter_storm_increase_pct`%** increase in dog poop complaints citywide. On February `r max_day` alone, residents filed **`r max_complaints`** complaints.
+
+Taking a closer look at Manhattan, there were there were **`r scales::comma(n_complaints)`** dog poop-related service requests filed between **`r min_date`** and **`r max_date`**.
 
 A clear annual trend is visible when aggregating these service requests to year and month:
 ```{r}
@@ -92,6 +131,7 @@ ggplot() +
        y = "Dog Poop Service Requests")
 ```
 
+
 Since 2022, dog poop-related 311 service requests have tended to be highest in January, February, and March, with a decreasing trend throughout the calendar year. 2024 is an exception to this trend; the count of service requests increased throughout the calendar year. 
 
 Based on the peak winter months in 2022, 2023, and 2025, the overall volume of dog-poop service requests in Manhattan appears to be increasing.
@@ -115,6 +155,8 @@ mn_complaints_byMonthYear <- soc_read(
   )
 )
 
+
+
 ggplot() +
   geom_point(data = mn_complaints_byMonthYear,
              aes(x = as.Date(year_month),
@@ -131,6 +173,44 @@ ggplot() +
        y = "All Service Requests")
 ```
 <br />
+
+
+From January 1, 2020 to April 2026, Dog poop-related service requests accounted for **`r round(n_complaints/mn_SRs_20_26_countOnly[[1,1]][1] *100,2)`%** of all service requests filed in Manhattan. While low, the share of dog poop related service requests in Manhattan has been increasing since 2020, reaching a high of ~0.5% in February 2026, as shown by the loess curve (blue, 95% confidence interval also shown) applied to monthly share:
+
+```{r}
+mn_dp_complaints_byMonthYear <- soc_read(
+  "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9/about_data",
+  query = soc_query(
+    select = "date_trunc_ym(created_date) AS year_month, count(*) AS monthly_dp_complaints",
+    where  = "borough = 'MANHATTAN' AND ((descriptor = 'Dog Waste') OR (descriptor = 'Animal Waste' AND descriptor_2 = 'Dog'))",
+    group  = "date_trunc_ym(created_date)",
+    order  = "year_month"
+  )
+)
+
+mn_dp_monthlyShare <- mn_complaints_byMonthYear |> 
+  left_join(mn_dp_complaints_byMonthYear) |> 
+  mutate(share = round(monthly_dp_complaints / monthly_complaints * 100,2))
+
+ggplot() +
+  geom_point(data = mn_dp_monthlyShare,
+             aes(x = as.Date(year_month),
+                 y = share)) +
+  scale_x_date(
+    date_breaks = "1 year",
+    date_minor_breaks = "1 month",
+    date_labels = "%Y"
+    ) +
+  geom_smooth(data = mn_dp_monthlyShare,
+             aes(x = as.Date(year_month),
+                 y = share),
+             method = "loess") +
+  labs(x = "Date (Year, Month)",
+       y = "Share of Dog Poop-Related Service Requests (%)")
+  
+```
+<br />
+
 When considering the spatial variation in a particular Service Request type as it relates to quality of life concerns at a given geographic unit (here, Community Districts are used), two factors must be considered: 
 
 - 311 Service Request data are records of citizen interaction with a government system, not direct observation of the associated phenomenon, and
@@ -301,10 +381,6 @@ maplibre(style = carto_style("positron")) |>
 ```
 <br />
 The top 10 blocks (street segments, to be specific) represent **`r round(sum(top_blocks$n_dog_poop_SRs)/nrow(comDist12_dog_poop_SRs)*100,2)`%** of the dog poop-related Service Requests. Notably, there is a cluster of **360** Service Requests located on and around Riverside Drive between West 158th and West 160th streets.
-
-Based on the above, accurate, appropriately contextualized, and defensible messaging may be something like:
-
-> We crunched the numbers -- Since 2020, New Yorkers filed 80 to 360 more dog poop-related Service Requests in Manhattan Community District 12 than expected based on request volume. We decided to take a closer look. Over 60% of the service requests were filed on and around Riverside Drive between West 158th and West 160th streets. Other clusters of requests came from the West side of Hood Wright Park, Fort Washington Ave between West 187th and West 190th streets, near Hillside Ave and Borgardus Place, and on Seaman Ave between Dyckman and and Cumming Streets.
 
 Having established Manhattan Community District 12 as a potential area of concern, let's turn our attention to hot spots of dog poop service requests in all of Manhattan's 12 community districts. 
 
