@@ -19,3 +19,4 @@ format:
 execute:
   message: false
   warning: false
+  freeze: false
